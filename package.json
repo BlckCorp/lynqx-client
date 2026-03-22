@@ -1,0 +1,16 @@
+{
+  "name": "lynqx-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "eslint": "^10.1.0"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}
