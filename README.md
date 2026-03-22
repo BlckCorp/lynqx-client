@@ -1,7 +1,7 @@
 # 🌙 Луна | Lynqx
 Голосовой сервис для кооп-игр (Factorio, Terraria, Captain of Industry).
 ----
-# 🌙 Луна | Lynqx (Server)
+# 🌙 Луна | Lynqx (Client)
 
 > Голосовой сервис для кооп-игр: Factorio, Captain of Industry, Terraria
 
