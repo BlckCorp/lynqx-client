@@ -1,7 +1,33 @@
-# Tauri + Vanilla
+# 🌙 Луна | Lynqx
+Голосовой сервис для кооп-игр (Factorio, Terraria, Captain of Industry).
+----
+# 🌙 Луна | Lynqx (Server)
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Javascript.
+> Голосовой сервис для кооп-игр: Factorio, Captain of Industry, Terraria
 
-## Recommended IDE Setup
+## 🎯 Цель
+Создать стабильный голосовой чат с серверами в РФ для игроков, которые ценят:
+- Низкий пинг (<20 мс)
+- Инструменты для кооперации (задачи, схемы, роли)
+- Оплату картами РФ
+- Отсутствие лишнего шума
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 🛠 Технический стек
+- **Язык:** Node.js + TypeScript
+- **Real-time:** Socket.io
+- **Голос:** LiveKit (WebRTC)
+- **База данных:** PostgreSQL
+- **Хостинг:** VPS в РФ (в разработке)
+
+## 📦 Статус
+🟡 В разработке (MVP)
+
+## 🗓 Дорожная карта
+- [ ] Прототип: голос + чат (локально)
+- [ ] Закрытая бета (10–20 тестировщиков)
+- [ ] Публичный релиз (РФ)
+
+## 📬 Контакты
+- Автор: @BlckCorp
+- Telegram: @LessGodblesss
+
