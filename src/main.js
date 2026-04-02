@@ -1,20 +1,30 @@
 ﻿// 🌙 Lynqx Client
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = 'http://localhost:3000';
+// 🔧 URL сервера - можно переопределить через переменную окружения
+const SOCKET_URL = window.__TAURI__?.env?.get('SOCKET_URL') || 
+                   import.meta.env?.VITE_SOCKET_URL || 
+                   'http://localhost:3000';
+
 let socket = null;
-let currentUser = null;
 let currentRoom = null;
 
 // Элементы UI
-const loginScreen = document.getElementById('loginScreen');
-const mainApp = document.getElementById('mainApp');
-const usernameInput = document.getElementById('usernameInput');
-const messageInput = document.getElementById('messageInput');
-const messagesDiv = document.getElementById('messages');
-const roomListDiv = document.getElementById('roomList');
-const userListDiv = document.getElementById('userList');
-const currentRoomName = document.getElementById('currentRoomName');
+let loginScreen, mainApp, usernameInput, messageInput, messagesDiv, roomListDiv, userListDiv, currentRoomName;
+
+// ============================================
+// 🔥 Инициализация DOM элементов
+// ============================================
+function initDOM() {
+    loginScreen = document.getElementById('loginScreen');
+    mainApp = document.getElementById('mainApp');
+    usernameInput = document.getElementById('usernameInput');
+    messageInput = document.getElementById('messageInput');
+    messagesDiv = document.getElementById('messages');
+    roomListDiv = document.getElementById('roomList');
+    userListDiv = document.getElementById('userList');
+    currentRoomName = document.getElementById('currentRoomName');
+}
 
 // ============================================
 // 🔥 Делаем функции доступными из HTML
@@ -63,8 +73,7 @@ window.showCreateRoom = function () {
 // ============================================
 
 function setupSocketListeners() {
-    socket.on('registered', (data) => {
-        currentUser = data.user;
+    socket.on('registered', () => {
         loginScreen.style.display = 'none';
         mainApp.style.display = 'grid';
         socket.emit('getRoomList');
@@ -139,4 +148,13 @@ function setupSocketListeners() {
 // 🚀 Инициализация
 // ============================================
 
-console.log('🌙 Lynqx Client готов к подключению');
+// Ждём загрузки DOM перед инициализацией
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        initDOM();
+        console.log('🌙 Lynqx Client готов к подключению');
+    });
+} else {
+    initDOM();
+    console.log('🌙 Lynqx Client готов к подключению');
+}
