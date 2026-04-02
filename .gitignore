@@ -1,31 +1,48 @@
 ```
 # Dependencies
 node_modules/
+Cargo.lock
+target/
+
+# Build artifacts
+dist/
+build/
 
 # Environment
 .env
 .env.local
-*.env.*
+.env.*
 
-# Logs and temp files
+# Logs
 *.log
-*.tmp
 
-# Editors
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# IDE
 .vscode/
+.idea/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.Python
+*.so
 
-# Build outputs
-dist/
-build/
-*.js.map
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
-# OS generated files
+# OS
 .DS_Store
 Thumbs.db
+
+# Tauri
+src-tauri/target/
+**/src-tauri/target/
 ```

@@ -1,19 +1,29 @@
 {
-  "name": "lynqx-client",
-  "private": true,
+  "name": "lynqx",
   "version": "0.1.0",
+  "private": true,
+  "description": "Голосовой сервис для кооп-игр: Factorio, Captain of Industry, Terraria",
   "type": "module",
   "scripts": {
-    "tauri": "tauri",
-    "lint": "eslint src/",
-    "dev": "tauri dev",
-    "build": "tauri build"
+    "dev:client": "npm run dev --workspace=apps/client",
+    "dev:server": "npm run dev --workspace=apps/server",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build:client": "npm run build --workspace=apps/client",
+    "build:server": "npm run build --workspace=apps/server",
+    "build": "npm run build:client && npm run build:server",
+    "start:server": "npm run start --workspace=apps/server",
+    "install:all": "npm install --workspaces",
+    "lint": "npm run lint --workspace=apps/client"
   },
+  "workspaces": [
+    "apps/*"
+  ],
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "eslint": "^10.1.0"
+    "concurrently": "^8.2.2"
   },
-  "dependencies": {
-    "socket.io-client": "^4.8.3"
-  }
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "@BlckCorp",
+  "license": "MIT"
 }
