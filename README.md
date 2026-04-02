@@ -13,14 +13,16 @@
 
 ```
 lynqx/
-├── client/               # Tauri клиент (Desktop приложение)
-│   ├── src/             # Исходный код фронтенда
-│   ├── src-tauri/       # Tauri бэкенд (Rust)
-│   └── package.json     # Зависимости Node.js
-├── server/              # Socket.IO сервер
-│   ├── index.js        # Основная логика сервера
-│   └── package.json    # Зависимости Node.js
-└── README.md           # Этот файл
+├── apps/                    # Все приложения проекта
+│   ├── client/             # Tauri клиент (Desktop приложение)
+│   │   ├── src/           # Исходный код фронтенда
+│   │   ├── src-tauri/     # Tauri бэкенд (Rust)
+│   │   └── package.json   # Зависимости Node.js
+│   └── server/            # Socket.IO сервер
+│       ├── index.js       # Основная логика сервера
+│       └── package.json   # Зависимости Node.js
+├── package.json           # Корневой package.json с workspaces
+└── README.md              # Этот файл
 ```
 
 ## 🚀 Быстрый старт
@@ -33,30 +35,42 @@ lynqx/
 ### Установка всех зависимостей
 
 ```bash
-# Установка зависимостей клиента
-npm install
-
-# Установка зависимостей сервера
-cd server && npm install && cd ..
+# Установка всех зависимостей сразу (клиент + сервер)
+npm install --workspaces
 ```
 
-### Запуск сервера
+### Запуск в режиме разработки
 
+#### Вариант 1: Запуск обоих приложений одновременно
 ```bash
-cd server
-npm start
-# или в режиме разработки
 npm run dev
 ```
 
-Сервер запустится на `http://localhost:3000`
+#### Вариант 2: Раздельный запуск
 
-### Запуск клиента
+**Терминал 1 - Сервер:**
+```bash
+npm run dev:server
+# или
+npm start --workspace=apps/server
+```
 
-В отдельном терминале:
+**Терминал 2 - Клиент:**
+```bash
+npm run dev:client
+# или
+npm run dev --workspace=apps/client
+```
+
+### Сборка проекта
 
 ```bash
-npm run dev
+# Сборка всех приложений
+npm run build
+
+# Или по отдельности
+npm run build:client    # Сборка клиента
+npm run build:server    # Сборка сервера (если нужно)
 ```
 
 ## ⚙️ Настройка
@@ -65,14 +79,9 @@ npm run dev
 
 По умолчанию клиент подключается к `http://localhost:3000`. Для изменения:
 
-1. Создайте файл `.env` в корне проекта клиента:
+1. Создайте файл `.env` в директории клиента (`apps/client/.env`):
    ```bash
-   cp .env.example .env
-   ```
-
-2. Измените значение `VITE_SOCKET_URL`:
-   ```
-   VITE_SOCKET_URL=https://your-server.com
+   SOCKET_URL=https://your-server.com
    ```
 
 Или используйте переменную окружения Tauri `SOCKET_URL`.
@@ -85,7 +94,7 @@ npm run dev
 
 Пример запуска сервера на конкретном порту:
 ```bash
-PORT=8080 npm start
+PORT=8080 npm run start --workspace=apps/server
 ```
 
 ## 🛠 Технический стек
@@ -125,6 +134,7 @@ PORT=8080 npm start
 ## 🗓 Дорожная карта
 - [x] Базовый текстовый чат
 - [x] Система комнат
+- [x] Monorepo структура
 - [x] Конфигурация URL сервера
 - [ ] Голосовой чат (WebRTC/LiveKit)
 - [ ] Интеграция с бэкендом в РФ
