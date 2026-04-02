@@ -1,21 +1,39 @@
-# 🔥 Не загружаем эти файлы
-
-# Зависимости
+```
+# Dependencies
 node_modules/
-package-lock.json
 
-# Tauri сборка
-src-tauri/target/
-src-tauri/bin/
-src-tauri/build/
-
-# Логи
-*.log
-
-# Временные файлы
-.DS_Store
-Thumbs.db
-
-# Переменные окружения
+# Environment
 .env
 .env.local
+.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Editors
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Build outputs
+dist/
+build/
+*.min.js
+*.min.css
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```
