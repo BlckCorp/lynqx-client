@@ -1,16 +1,15 @@
-﻿// 🌙 Lynqx Client
+// 🌙 Lynqx Client - Синхронизировано с сервером
 import { io } from 'socket.io-client';
 
-// 🔧 URL сервера - можно переопределить через переменную окружения
-const SOCKET_URL = window.__TAURI__?.env?.get('SOCKET_URL') || 
-                   import.meta.env?.VITE_SOCKET_URL || 
-                   'http://localhost:3000';
+// 🔧 URL сервера
+const SOCKET_URL = 'http://localhost:3000';
 
 let socket = null;
 let currentRoom = null;
+let currentUser = null;
 
 // Элементы UI
-let loginScreen, mainApp, usernameInput, messageInput, messagesDiv, roomListDiv, userListDiv, currentRoomName;
+let loginScreen, mainApp, usernameInput, messageInput, messagesDiv, roomListDiv, currentRoomName;
 
 // ============================================
 // 🔥 Инициализация DOM элементов
@@ -22,12 +21,11 @@ function initDOM() {
     messageInput = document.getElementById('messageInput');
     messagesDiv = document.getElementById('messages');
     roomListDiv = document.getElementById('roomList');
-    userListDiv = document.getElementById('userList');
     currentRoomName = document.getElementById('currentRoomName');
 }
 
 // ============================================
-// 🔥 Делаем функции доступными из HTML
+// 🔥 Функции для HTML
 // ============================================
 
 window.register = function () {
@@ -36,14 +34,34 @@ window.register = function () {
 
     socket = io(SOCKET_URL);
     setupSocketListeners();
-    socket.emit('register', { username });
+    
+    // Отправляем регистрацию с callback
+    socket.emit('register', { username }, (response) => {
+        console.log('📩 Ответ на регистрацию:', response);
+        if (response && response.success) {
+            currentUser = { id: response.userId, username: response.username };
+            console.log('✅ Успешная регистрация:', response.username);
+            loginScreen.style.display = 'none';
+            mainApp.style.display = 'grid';
+            // Запрашиваем список комнат
+            socket.emit('getRoomList');
+        } else {
+            const errorMsg = response?.error || 'Неизвестная ошибка';
+            console.error('❌ Ошибка регистрации:', errorMsg);
+            alert('Ошибка: ' + errorMsg);
+        }
+    });
 };
 
 window.sendMessage = function () {
     const text = messageInput.value.trim();
-    if (!text || !currentRoom) return;
+    if (!text || !currentRoom || !currentUser) return;
 
-    socket.emit('chatMessage', { roomId: currentRoom, text });
+    socket.emit('sendMessage', { roomName: currentRoom, content: text }, (response) => {
+        if (response && !response.success) {
+            console.error('❌ Ошибка отправки:', response.error);
+        }
+    });
     messageInput.value = '';
 };
 
@@ -51,110 +69,116 @@ window.handleKeyPress = function (event) {
     if (event.key === 'Enter') window.sendMessage();
 };
 
-window.joinRoom = function (roomId, roomName) {
-    currentRoom = roomId;
+window.joinRoom = function (roomName) {
+    if (!currentUser) return alert('Сначала войдите в систему!');
+    
+    currentRoom = roomName;
     currentRoomName.textContent = roomName;
-    socket.emit('joinRoom', { roomId });
-    messagesDiv.innerHTML = '';
+    messagesDiv.innerHTML = '<div style="color:#888;">Загрузка истории...</div>';
+    
+    // Создаем/присоединяемся к комнате
+    socket.emit('createRoom', { roomName }, (response) => {
+        console.log('📩 Ответ на создание комнаты:', response);
+        if (response && response.success) {
+            console.log('🏠 Комната:', roomName);
+            messagesDiv.innerHTML = '';
+            
+            // Загружаем историю сообщений
+            if (response.messages && response.messages.length > 0) {
+                response.messages.forEach(msg => {
+                    const div = document.createElement('div');
+                    div.className = 'message';
+                    div.innerHTML = `
+                        <div class="message-username">${msg.username}</div>
+                        <div class="message-text">${msg.content}</div>
+                    `;
+                    messagesDiv.appendChild(div);
+                });
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+            
+            // Обновляем список комнат
+            socket.emit('getRoomList');
+        } else {
+            const errorMsg = response?.error || 'Ошибка входа в комнату';
+            console.error('❌ Ошибка:', errorMsg);
+            messagesDiv.innerHTML = `<div style="color:red;">${errorMsg}</div>`;
+        }
+    });
 };
 
 window.showCreateRoom = function () {
+    if (!currentUser) return alert('Сначала войдите в систему!');
+    
     const name = prompt('Название комнаты:');
     if (!name) return;
-
-    const type = confirm('Приватная комната? (OK = приватная, Cancel = публичная)') ? 'private' : 'public';
-    const password = type === 'private' ? prompt('Пароль:') : null;
-
-    socket.emit('createRoom', { name, type, password });
+    
+    window.joinRoom(name);
 };
 
 // ============================================
-// 🔌 Настройка слушателей сокета
+// 🔌 Слушатели событий сокета
 // ============================================
 
 function setupSocketListeners() {
-    socket.on('registered', () => {
-        loginScreen.style.display = 'none';
-        mainApp.style.display = 'grid';
-        socket.emit('getRoomList');
-    });
-
     socket.on('connect', () => {
         console.log('✅ Подключено к серверу');
     });
 
     socket.on('disconnect', () => {
         console.log('❌ Отключено от сервера');
-        alert('Потеряно соединение с сервером');
+        alert('Потеряно соединение!');
     });
 
-    socket.on('error', (data) => {
-        alert(data.message);
+    socket.on('error', (err) => {
+        console.error('❌ Ошибка:', err);
     });
 
+    // Список комнат
     socket.on('roomList', (rooms) => {
+        console.log('📋 Список комнат:', rooms);
+        if (!rooms || rooms.length === 0) {
+            roomListDiv.innerHTML = '<div style="padding:10px;color:#888;">Нет комнат. Создайте первую!</div>';
+            return;
+        }
+        
         roomListDiv.innerHTML = rooms.map(room => `
-      <div class="room-item" onclick="joinRoom('${room.id}', '${room.name}')">
-        ${room.type === 'private' ? '🔒' : '🌐'} ${room.name}
-      </div>
-    `).join('');
+            <div class="room-item" onclick="joinRoom('${room.name}')">
+                🌐 ${room.name}
+            </div>
+        `).join('');
     });
 
-    socket.on('roomJoined', (data) => {
-        console.log('🚪 Вошёл в комнату:', data.room.name);
-    });
-
-    socket.on('roomUserList', (users) => {
-        userListDiv.innerHTML = users.map(user => `
-      <div class="user-item">
-        <div class="user-avatar">${user.username[0].toUpperCase()}</div>
-        <div>
-          <div>${user.username}</div>
-          <div class="user-status ${user.status === 'offline' ? 'offline' : ''}"></div>
-        </div>
-      </div>
-    `).join('');
-    });
-
-    socket.on('chatMessage', (message) => {
-        if (message.roomId !== currentRoom) return;
-
+    // Новое сообщение в комнате
+    socket.on('receiveMessage', (data) => {
+        console.log('📨 Сообщение:', data);
+        // Показываем только если мы в этой комнате или комната не указана (глобальное)
         const div = document.createElement('div');
         div.className = 'message';
         div.innerHTML = `
-      <div class="message-username">${message.user.username}</div>
-      <div class="message-text">${message.text}</div>
-    `;
+            <div class="message-username">${data.username}</div>
+            <div class="message-text">${data.content}</div>
+        `;
         messagesDiv.appendChild(div);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     });
 
-    socket.on('messageHistory', (messages) => {
-        messagesDiv.innerHTML = messages.map(msg => `
-      <div class="message">
-        <div class="message-username">${msg.user.username}</div>
-        <div class="message-text">${msg.text}</div>
-      </div>
-    `).join('');
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    });
-
-    socket.on('userJoinedRoom', (data) => {
-        console.log('👤 Пользователь вошёл:', data.user.username);
+    // Пользователь вошел в комнату
+    socket.on('userJoined', (data) => {
+        console.log('🚪 Вошёл:', data.username);
     });
 }
 
 // ============================================
-// 🚀 Инициализация
+// 🚀 Старт
 // ============================================
 
-// Ждём загрузки DOM перед инициализацией
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         initDOM();
-        console.log('🌙 Lynqx Client готов к подключению');
+        console.log('🌙 Lynqx Client готов');
     });
 } else {
     initDOM();
-    console.log('🌙 Lynqx Client готов к подключению');
+    console.log('🌙 Lynqx Client готов');
 }
