@@ -2,11 +2,9 @@
 # Dependencies
 node_modules/
 Cargo.lock
-target/
 
 # Build artifacts
-dist/
-build/
+target/
 
 # Environment
 .env
@@ -16,12 +14,7 @@ build/
 # Logs
 *.log
 
-# Temporary files
-*.tmp
-*.swp
-*.swo
-
-# IDE
+# Editors
 .vscode/
 .idea/
 
@@ -31,18 +24,55 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-*.so
-
-# Coverage
-coverage/
-htmlcov/
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
 .coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
 
-# OS
-.DS_Store
-Thumbs.db
+# Node.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+node_modules/
+jspm_packages/
+*.tsbuildinfo
+.nyc_output
+coverage/
+.nyc_output/
+istanbul/
+.eslintcache
+
+# Rust
+target/
+Cargo.lock
 
 # Tauri
-src-tauri/target/
 **/src-tauri/target/
+**/src-tauri/Cargo.lock
+
+# Database
+*.db
+*.db-journal
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 ```

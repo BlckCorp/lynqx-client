@@ -1,6 +1,12 @@
 // 🌙 Lynqx Server
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
+import pkg from 'pg';
+const { Pool } = pkg;
+import dotenv from 'dotenv';
+
+// Загружаем переменные окружения
+dotenv.config();
 
 // ============================================
 // 🔧 Конфигурация
@@ -9,11 +15,94 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 // ============================================
-// 💾 Хранилище данных (в памяти)
+// 💾 Подключение к PostgreSQL
+// ============================================
+const pool = new Pool({
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'lynqx',
+  password: process.env.DB_PASSWORD || 'postgres',
+  port: process.env.DB_PORT || 5432,
+});
+
+// Проверяем подключение
+pool.connect((err, client, release) => {
+  if (err) {
+    console.error('❌ Ошибка подключения к PostgreSQL:', err.stack);
+  } else {
+    console.log('✅ Подключение к PostgreSQL успешно');
+    release();
+  }
+});
+
+// ============================================
+// 🗄 Инициализация таблиц базы данных
+// ============================================
+async function initDatabase() {
+  try {
+    // Таблица пользователей
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(255) PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        socket_id VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'offline',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('📊 Таблица users готова');
+
+    // Таблица комнат
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS rooms (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        type VARCHAR(50) DEFAULT 'public',
+        password VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('📊 Таблица rooms готова');
+
+    // Таблица сообщений
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id VARCHAR(255) PRIMARY KEY,
+        room_id VARCHAR(255) REFERENCES rooms(id) ON DELETE CASCADE,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE SET NULL,
+        username VARCHAR(255),
+        text TEXT NOT NULL,
+        timestamp BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('📊 Таблица messages готова');
+
+    // Таблица пользователей в комнатах (связь многие-ко-многим)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS room_users (
+        room_id VARCHAR(255) REFERENCES rooms(id) ON DELETE CASCADE,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (room_id, user_id)
+      )
+    `);
+    console.log('📊 Таблица room_users готова');
+
+  } catch (err) {
+    console.error('❌ Ошибка инициализации базы данных:', err.stack);
+  }
+}
+
+// Запускаем инициализацию
+initDatabase();
+
+// ============================================
+// 💾 Хранилище данных (в памяти для активных сессий)
 // ============================================
 const users = new Map(); // userId -> { id, username, socketId, status }
 const rooms = new Map(); // roomId -> { id, name, type, password, users: [] }
-const messages = new Map(); // roomId -> [messages]
+// Сообщения теперь загружаются из БД
 
 // ============================================
 // 🚀 Создание HTTP сервера и Socket.IO
@@ -59,7 +148,7 @@ io.on('connection', (socket) => {
   });
 
   // Создание комнаты
-  socket.on('createRoom', ({ name, type = 'public', password = null }) => {
+  socket.on('createRoom', async ({ name, type = 'public', password = null }) => {
     const user = getUserBySocketId(socket.id);
     if (!user) return;
 
@@ -72,8 +161,18 @@ io.on('connection', (socket) => {
       users: []
     };
 
+    // Сохраняем комнату в БД
+    try {
+      await pool.query(
+        'INSERT INTO rooms (id, name, type, password) VALUES ($1, $2, $3, $4)',
+        [roomId, name.trim(), type, password]
+      );
+      console.log(`💾 Комната сохранена в БД: ${name}`);
+    } catch (err) {
+      console.error('❌ Ошибка сохранения комнаты:', err.message);
+    }
+
     rooms.set(roomId, room);
-    messages.set(roomId, []);
 
     console.log(`🏠 Комната создана: ${name} (${roomId})`);
     
@@ -82,7 +181,7 @@ io.on('connection', (socket) => {
   });
 
   // Вход в комнату
-  socket.on('joinRoom', ({ roomId }) => {
+  socket.on('joinRoom', async ({ roomId }) => {
     const user = getUserBySocketId(socket.id);
     if (!user) return;
 
@@ -99,6 +198,16 @@ io.on('connection', (socket) => {
     // Добавляем пользователя в комнату
     if (!room.users.includes(user.id)) {
       room.users.push(user.id);
+      
+      // Сохраняем связь пользователь-комната в БД
+      try {
+        await pool.query(
+          'INSERT INTO room_users (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [roomId, user.id]
+        );
+      } catch (err) {
+        console.error('❌ Ошибка сохранения пользователя в комнате:', err.message);
+      }
     }
 
     socket.join(roomId);
@@ -106,9 +215,24 @@ io.on('connection', (socket) => {
 
     console.log(`🚪 ${user.username} вошёл в комнату ${room.name}`);
 
-    // Отправляем историю сообщений
-    const roomMessages = messages.get(roomId) || [];
-    socket.emit('messageHistory', roomMessages);
+    // Загружаем историю сообщений из БД
+    try {
+      const result = await pool.query(
+        'SELECT id, room_id, user_id, username, text, timestamp FROM messages WHERE room_id = $1 ORDER BY timestamp ASC',
+        [roomId]
+      );
+      const roomMessages = result.rows.map(row => ({
+        id: row.id,
+        roomId: row.room_id,
+        user: { id: row.user_id, username: row.username },
+        text: row.text,
+        timestamp: row.timestamp
+      }));
+      socket.emit('messageHistory', roomMessages);
+    } catch (err) {
+      console.error('❌ Ошибка загрузки истории сообщений:', err.message);
+      socket.emit('messageHistory', []);
+    }
 
     // Отправляем список пользователей в комнате
     emitRoomUserList(roomId);
@@ -121,7 +245,7 @@ io.on('connection', (socket) => {
   });
 
   // Отправка сообщения
-  socket.on('chatMessage', ({ roomId, text }) => {
+  socket.on('chatMessage', async ({ roomId, text }) => {
     const user = getUserBySocketId(socket.id);
     if (!user || !text.trim()) return;
 
@@ -136,10 +260,15 @@ io.on('connection', (socket) => {
       timestamp: Date.now()
     };
 
-    // Сохраняем сообщение
-    const roomMessages = messages.get(roomId) || [];
-    roomMessages.push(message);
-    messages.set(roomId, roomMessages);
+    // Сохраняем сообщение в БД
+    try {
+      await pool.query(
+        'INSERT INTO messages (id, room_id, user_id, username, text, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
+        [message.id, roomId, user.id, user.username, text.trim(), message.timestamp]
+      );
+    } catch (err) {
+      console.error('❌ Ошибка сохранения сообщения:', err.message);
+    }
 
     // Отправляем сообщение всем в комнате
     io.to(roomId).emit('chatMessage', message);
@@ -151,12 +280,22 @@ io.on('connection', (socket) => {
   });
 
   // Отключение
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     const user = getUserBySocketId(socket.id);
     if (user) {
       console.log(`❌ Пользователь отключился: ${user.username}`);
       
-      // Удаляем пользователя из всех комнат
+      // Обновляем статус пользователя в БД
+      try {
+        await pool.query(
+          'UPDATE users SET status = $1, socket_id = NULL WHERE id = $2',
+          ['offline', user.id]
+        );
+      } catch (err) {
+        console.error('❌ Ошибка обновления статуса пользователя:', err.message);
+      }
+
+      // Удаляем пользователя из всех комнат (в памяти)
       for (const [roomId, room] of rooms) {
         const index = room.users.indexOf(user.id);
         if (index > -1) {
@@ -169,9 +308,8 @@ io.on('connection', (socket) => {
         }
       }
 
-      // Обновляем статус или удаляем
       user.status = 'offline';
-      // Можно удалить пользователя или оставить для истории
+      // Не удаляем пользователя из Map, чтобы сохранить историю
     }
   });
 });
@@ -188,7 +326,29 @@ function getUserBySocketId(socketId) {
   return null;
 }
 
+async function getRoomListFromDB() {
+  try {
+    const result = await pool.query(`
+      SELECT r.id, r.name, r.type, COUNT(ru.user_id) as "userCount"
+      FROM rooms r
+      LEFT JOIN room_users ru ON r.id = ru.room_id
+      GROUP BY r.id, r.name, r.type
+      ORDER BY r.created_at DESC
+    `);
+    return result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      userCount: parseInt(row.userCount)
+    }));
+  } catch (err) {
+    console.error('❌ Ошибка получения списка комнат:', err.message);
+    return [];
+  }
+}
+
 function getRoomList() {
+  // Для активных комнат используем память, для остальных - БД
   return Array.from(rooms.values()).map(room => ({
     id: room.id,
     name: room.name,
@@ -197,8 +357,9 @@ function getRoomList() {
   }));
 }
 
-function emitRoomList(socket) {
-  socket.emit('roomList', getRoomList());
+async function emitRoomList(socket) {
+  const roomList = await getRoomListFromDB();
+  socket.emit('roomList', roomList);
 }
 
 function emitRoomUserList(roomId) {
