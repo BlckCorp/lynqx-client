@@ -1,387 +1,317 @@
-// 🌙 Lynqx Server
+import dotenv from 'dotenv';
+import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { v4 as uuidv4 } from 'uuid';
 import pkg from 'pg';
 const { Pool } = pkg;
-import dotenv from 'dotenv';
 
-// Загружаем переменные окружения
+// Загрузка переменных окружения
 dotenv.config();
 
-// ============================================
-// 🔧 Конфигурация
-// ============================================
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
-
-// ============================================
-// 💾 Подключение к PostgreSQL
-// ============================================
+// Настройка подключения к PostgreSQL
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
   host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'lynqx',
-  password: process.env.DB_PASSWORD || 'postgres',
   port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME || 'lynqx',
 });
 
-// Проверяем подключение
+// Проверка подключения к БД при старте
 pool.connect((err, client, release) => {
   if (err) {
-    console.error('❌ Ошибка подключения к PostgreSQL:', err.stack);
+    console.error('❌ Ошибка подключения к базе данных:', err.stack);
   } else {
-    console.log('✅ Подключение к PostgreSQL успешно');
+    console.log('✅ База данных подключена успешно');
     release();
   }
 });
 
-// ============================================
-// 🗄 Инициализация таблиц базы данных
-// ============================================
+// Создание HTTP сервера
+const httpServer = createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Lynqx Server is running');
+});
+
+// Настройка Socket.IO
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  allowEIO3: true
+});
+
+// Инициализация таблиц БД при старте
 async function initDatabase() {
+  const client = await pool.connect();
   try {
-    // Таблица пользователей
-    await pool.query(`
+    await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(255) PRIMARY KEY,
-        username VARCHAR(255) NOT NULL,
-        socket_id VARCHAR(255),
-        status VARCHAR(50) DEFAULT 'offline',
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        username VARCHAR(255) UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('📊 Таблица users готова');
+      );
 
-    // Таблица комнат
-    await pool.query(`
       CREATE TABLE IF NOT EXISTS rooms (
-        id VARCHAR(255) PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        type VARCHAR(50) DEFAULT 'public',
-        password VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('📊 Таблица rooms готова');
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(255) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by UUID REFERENCES users(id)
+      );
 
-    // Таблица сообщений
-    await pool.query(`
       CREATE TABLE IF NOT EXISTS messages (
-        id VARCHAR(255) PRIMARY KEY,
-        room_id VARCHAR(255) REFERENCES rooms(id) ON DELETE CASCADE,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE SET NULL,
-        username VARCHAR(255),
-        text TEXT NOT NULL,
-        timestamp BIGINT NOT NULL,
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('📊 Таблица messages готова');
+      );
 
-    // Таблица пользователей в комнатах (связь многие-ко-многим)
-    await pool.query(`
       CREATE TABLE IF NOT EXISTS room_users (
-        room_id VARCHAR(255) REFERENCES rooms(id) ON DELETE CASCADE,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
         joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (room_id, user_id)
-      )
+      );
     `);
-    console.log('📊 Таблица room_users готова');
-
+    console.log('🗄️ Таблицы базы данных проверены/созданы');
   } catch (err) {
-    console.error('❌ Ошибка инициализации базы данных:', err.stack);
+    console.error('❌ Ошибка инициализации БД:', err);
+  } finally {
+    client.release();
   }
 }
 
-// Запускаем инициализацию
+// Запуск инициализации
 initDatabase();
 
-// ============================================
-// 💾 Хранилище данных (в памяти для активных сессий)
-// ============================================
-const users = new Map(); // userId -> { id, username, socketId, status }
-const rooms = new Map(); // roomId -> { id, name, type, password, users: [] }
-// Сообщения теперь загружаются из БД
-
-// ============================================
-// 🚀 Создание HTTP сервера и Socket.IO
-// ============================================
-import { createServer } from 'http';
-
-const httpServer = createServer();
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
-});
-
-// ============================================
-// 🔌 Обработчики событий
-// ============================================
 io.on('connection', (socket) => {
   console.log(`🔌 Подключился клиент: ${socket.id}`);
 
+  let currentUser = null;
+
   // Регистрация пользователя
-  socket.on('register', ({ username }) => {
-    if (!username || username.trim().length === 0) {
-      return socket.emit('error', { message: 'Некорректное имя пользователя' });
-    }
-
-    const userId = uuidv4();
-    const user = {
-      id: userId,
-      username: username.trim(),
-      socketId: socket.id,
-      status: 'online'
-    };
-
-    users.set(userId, user);
-    socket.userId = userId;
-
-    console.log(`👤 Пользователь зарегистрирован: ${username} (${userId})`);
-    socket.emit('registered', { userId, username });
-
-    // Отправляем список комнат
-    emitRoomList(socket);
-  });
-
-  // Создание комнаты
-  socket.on('createRoom', async ({ name, type = 'public', password = null }) => {
-    const user = getUserBySocketId(socket.id);
-    if (!user) return;
-
-    const roomId = uuidv4();
-    const room = {
-      id: roomId,
-      name: name.trim(),
-      type,
-      password,
-      users: []
-    };
-
-    // Сохраняем комнату в БД
-    try {
-      await pool.query(
-        'INSERT INTO rooms (id, name, type, password) VALUES ($1, $2, $3, $4)',
-        [roomId, name.trim(), type, password]
-      );
-      console.log(`💾 Комната сохранена в БД: ${name}`);
-    } catch (err) {
-      console.error('❌ Ошибка сохранения комнаты:', err.message);
-    }
-
-    rooms.set(roomId, room);
-
-    console.log(`🏠 Комната создана: ${name} (${roomId})`);
-    
-    // Отправляем обновленный список всем
-    io.emit('roomList', getRoomList());
-  });
-
-  // Вход в комнату
-  socket.on('joinRoom', async ({ roomId }) => {
-    const user = getUserBySocketId(socket.id);
-    if (!user) return;
-
-    const room = rooms.get(roomId);
-    if (!room) {
-      return socket.emit('error', { message: 'Комната не найдена' });
-    }
-
-    // Проверка пароля для приватных комнат
-    if (room.type === 'private' && room.password) {
-      // В реальном приложении нужна более сложная логика
-    }
-
-    // Добавляем пользователя в комнату
-    if (!room.users.includes(user.id)) {
-      room.users.push(user.id);
-      
-      // Сохраняем связь пользователь-комната в БД
-      try {
-        await pool.query(
-          'INSERT INTO room_users (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [roomId, user.id]
-        );
-      } catch (err) {
-        console.error('❌ Ошибка сохранения пользователя в комнате:', err.message);
+  socket.on('register', async (data, callback) => {
+    const safeCallback = (response) => {
+      if (typeof callback === 'function') {
+        callback(response);
       }
+    };
+
+    let username = '';
+    if (typeof data === 'string') {
+      username = data;
+    } else if (data && typeof data === 'object' && data.username) {
+      username = data.username;
     }
 
-    socket.join(roomId);
-    socket.currentRoom = roomId;
+    if (!username) {
+      return safeCallback({ success: false, error: 'Имя обязательно' });
+    }
 
-    console.log(`🚪 ${user.username} вошёл в комнату ${room.name}`);
-
-    // Загружаем историю сообщений из БД
     try {
-      const result = await pool.query(
-        'SELECT id, room_id, user_id, username, text, timestamp FROM messages WHERE room_id = $1 ORDER BY timestamp ASC',
+      const client = await pool.connect();
+      
+      const userResult = await client.query(
+        'SELECT id FROM users WHERE username = $1',
+        [username]
+      );
+
+      let userId;
+      if (userResult.rows.length > 0) {
+        userId = userResult.rows[0].id;
+        console.log(`👤 Пользователь найден: ${username} (${userId})`);
+      } else {
+        const newUser = await client.query(
+          'INSERT INTO users (username) VALUES ($1) RETURNING id',
+          [username]
+        );
+        userId = newUser.rows[0].id;
+        console.log(`👤 Пользователь зарегистрирован: ${username} (${userId})`);
+      }
+
+      currentUser = { id: userId, username };
+      client.release();
+
+      safeCallback({ success: true, userId, username });
+    } catch (err) {
+      console.error('❌ Ошибка регистрации:', err);
+      safeCallback({ success: false, error: 'Ошибка сервера при регистрации' });
+    }
+  });
+
+  // Создание/присоединение к комнате
+  socket.on('createRoom', async (data, callback) => {
+    const safeCallback = (response) => {
+      if (typeof callback === 'function') {
+        callback(response);
+      }
+    };
+
+    if (!currentUser) {
+      return safeCallback({ success: false, error: 'Сначала зарегистрируйтесь' });
+    }
+
+    let roomName = '';
+    if (typeof data === 'string') {
+      roomName = data;
+    } else if (data && typeof data === 'object' && data.roomName) {
+      roomName = data.roomName;
+    }
+
+    if (!roomName) {
+      return safeCallback({ success: false, error: 'Название комнаты обязательно' });
+    }
+
+    try {
+      const client = await pool.connect();
+
+      const roomCheck = await client.query(
+        'SELECT id FROM rooms WHERE name = $1',
+        [roomName]
+      );
+
+      let roomId;
+      if (roomCheck.rows.length > 0) {
+        roomId = roomCheck.rows[0].id;
+        console.log(`🏠 Комната найдена: ${roomName} (${roomId})`);
+      } else {
+        const newRoom = await client.query(
+          'INSERT INTO rooms (name, created_by) VALUES ($1, $2) RETURNING id',
+          [roomName, currentUser.id]
+        );
+        roomId = newRoom.rows[0].id;
+        console.log(`🏠 Комната создана: ${roomName} (${roomId})`);
+        
+        await client.query(
+          'INSERT INTO room_users (room_id, user_id) VALUES ($1, $2)',
+          [roomId, currentUser.id]
+        );
+      }
+
+      socket.join(roomName);
+      
+      await client.query(
+        'INSERT INTO room_users (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [roomId, currentUser.id]
+      );
+
+      client.release();
+
+      // Получаем историю сообщений
+      const historyClient = await pool.connect();
+      const msgResult = await historyClient.query(
+        `SELECT m.content, u.username, m.created_at 
+         FROM messages m 
+         JOIN users u ON m.user_id = u.id 
+         WHERE m.room_id = $1 
+         ORDER BY m.created_at ASC`,
         [roomId]
       );
-      const roomMessages = result.rows.map(row => ({
-        id: row.id,
-        roomId: row.room_id,
-        user: { id: row.user_id, username: row.username },
-        text: row.text,
-        timestamp: row.timestamp
-      }));
-      socket.emit('messageHistory', roomMessages);
+      historyClient.release();
+
+      safeCallback({ 
+        success: true, 
+        roomId, 
+        roomName, 
+        messages: msgResult.rows 
+      });
+
+      socket.to(roomName).emit('userJoined', { username: currentUser.username, roomId });
+      console.log(`🚪 ${currentUser.username} вошёл в комнату ${roomName}`);
+
     } catch (err) {
-      console.error('❌ Ошибка загрузки истории сообщений:', err.message);
-      socket.emit('messageHistory', []);
+      console.error('❌ Ошибка создания комнаты:', err);
+      safeCallback({ success: false, error: 'Ошибка сервера при создании комнаты' });
     }
-
-    // Отправляем список пользователей в комнате
-    emitRoomUserList(roomId);
-
-    // Уведомляем других пользователей
-    socket.to(roomId).emit('userJoinedRoom', {
-      roomId,
-      user: { id: user.id, username: user.username }
-    });
   });
 
   // Отправка сообщения
-  socket.on('chatMessage', async ({ roomId, text }) => {
-    const user = getUserBySocketId(socket.id);
-    if (!user || !text.trim()) return;
-
-    const room = rooms.get(roomId);
-    if (!room) return;
-
-    const message = {
-      id: uuidv4(),
-      roomId,
-      user: { id: user.id, username: user.username },
-      text: text.trim(),
-      timestamp: Date.now()
+  socket.on('sendMessage', async (data, callback) => {
+    const safeCallback = (response) => {
+      if (typeof callback === 'function') {
+        callback(response);
+      }
     };
 
-    // Сохраняем сообщение в БД
-    try {
-      await pool.query(
-        'INSERT INTO messages (id, room_id, user_id, username, text, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
-        [message.id, roomId, user.id, user.username, text.trim(), message.timestamp]
-      );
-    } catch (err) {
-      console.error('❌ Ошибка сохранения сообщения:', err.message);
+    if (!currentUser) return;
+    
+    let roomName = '';
+    let content = '';
+    
+    if (typeof data === 'object') {
+      roomName = data.roomName || '';
+      content = data.content || '';
     }
 
-    // Отправляем сообщение всем в комнате
-    io.to(roomId).emit('chatMessage', message);
+    if (!content || !roomName) return;
+
+    try {
+      const client = await pool.connect();
+      
+      const roomResult = await client.query(
+        'SELECT id FROM rooms WHERE name = $1',
+        [roomName]
+      );
+
+      if (roomResult.rows.length === 0) {
+        client.release();
+        return safeCallback({ success: false, error: 'Комната не найдена' });
+      }
+
+      const roomId = roomResult.rows[0].id;
+
+      await client.query(
+        'INSERT INTO messages (room_id, user_id, content) VALUES ($1, $2, $3)',
+        [roomId, currentUser.id, content]
+      );
+      
+      client.release();
+
+      io.to(roomName).emit('receiveMessage', {
+        username: currentUser.username,
+        content,
+        roomName
+      });
+
+      safeCallback({ success: true });
+    } catch (err) {
+      console.error('❌ Ошибка отправки сообщения:', err);
+      safeCallback({ success: false, error: 'Ошибка сохранения сообщения' });
+    }
   });
 
   // Получение списка комнат
-  socket.on('getRoomList', () => {
-    emitRoomList(socket);
+  socket.on('getRoomList', async (callback) => {
+    try {
+      const client = await pool.connect();
+      const result = await client.query(
+        'SELECT id, name FROM rooms ORDER BY created_at DESC'
+      );
+      client.release();
+
+      const rooms = result.rows.map(row => ({
+        id: row.id,
+        name: row.name
+      }));
+
+      socket.emit('roomList', rooms);
+      if (typeof callback === 'function') callback({ success: true });
+    } catch (err) {
+      console.error('❌ Ошибка получения списка комнат:', err);
+      socket.emit('roomList', []);
+    }
   });
 
   // Отключение
-  socket.on('disconnect', async () => {
-    const user = getUserBySocketId(socket.id);
-    if (user) {
-      console.log(`❌ Пользователь отключился: ${user.username}`);
-      
-      // Обновляем статус пользователя в БД
-      try {
-        await pool.query(
-          'UPDATE users SET status = $1, socket_id = NULL WHERE id = $2',
-          ['offline', user.id]
-        );
-      } catch (err) {
-        console.error('❌ Ошибка обновления статуса пользователя:', err.message);
-      }
-
-      // Удаляем пользователя из всех комнат (в памяти)
-      for (const [roomId, room] of rooms) {
-        const index = room.users.indexOf(user.id);
-        if (index > -1) {
-          room.users.splice(index, 1);
-          io.to(roomId).emit('userLeftRoom', {
-            roomId,
-            userId: user.id
-          });
-          emitRoomUserList(roomId);
-        }
-      }
-
-      user.status = 'offline';
-      // Не удаляем пользователя из Map, чтобы сохранить историю
-    }
+  socket.on('disconnect', () => {
+    console.log(`🔌 Клиент отключился: ${socket.id}`);
   });
 });
 
-// ============================================
-// 🛠 Вспомогательные функции
-// ============================================
-function getUserBySocketId(socketId) {
-  for (const user of users.values()) {
-    if (user.socketId === socketId) {
-      return user;
-    }
-  }
-  return null;
-}
-
-async function getRoomListFromDB() {
-  try {
-    const result = await pool.query(`
-      SELECT r.id, r.name, r.type, COUNT(ru.user_id) as "userCount"
-      FROM rooms r
-      LEFT JOIN room_users ru ON r.id = ru.room_id
-      GROUP BY r.id, r.name, r.type
-      ORDER BY r.created_at DESC
-    `);
-    return result.rows.map(row => ({
-      id: row.id,
-      name: row.name,
-      type: row.type,
-      userCount: parseInt(row.userCount)
-    }));
-  } catch (err) {
-    console.error('❌ Ошибка получения списка комнат:', err.message);
-    return [];
-  }
-}
-
-function getRoomList() {
-  // Для активных комнат используем память, для остальных - БД
-  return Array.from(rooms.values()).map(room => ({
-    id: room.id,
-    name: room.name,
-    type: room.type,
-    userCount: room.users.length
-  }));
-}
-
-async function emitRoomList(socket) {
-  const roomList = await getRoomListFromDB();
-  socket.emit('roomList', roomList);
-}
-
-function emitRoomUserList(roomId) {
-  const room = rooms.get(roomId);
-  if (!room) return;
-
-  const userList = room.users
-    .map(userId => users.get(userId))
-    .filter(Boolean)
-    .map(user => ({
-      id: user.id,
-      username: user.username,
-      status: user.status
-    }));
-
-  io.to(roomId).emit('roomUserList', userList);
-}
-
-// ============================================
-// 🚀 Запуск сервера
-// ============================================
-httpServer.listen(PORT, HOST, () => {
-  console.log(`🌙 Lynqx Server запущен на http://${HOST}:${PORT}`);
-  console.log(`📡 Ожидание подключений...`);
+const PORT = process.env.PORT || 3000;
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
 });
